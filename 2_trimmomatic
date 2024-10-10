@@ -1,0 +1,2 @@
+#Trimmomatic
+for f in *R1_001.fastq.gz; do trimmomatic PE "$f" "${f/R1_001.fastq.gz/R2_001.fastq.gz}" "${f/R1_001.fastq.gz/forward_paired.fq.gz}" "${f/R1_001.fastq.gz/forward_unpaired.fq.gz}" "${f/R1_001.fastq.gz/reverse_paired.fq.gz}" "${f/R1_001.fastq.gz/reverse_unpaired.fq.gz}" SLIDINGWINDOW:4:20 2>&1 | tee "log_$f.txt"; done
