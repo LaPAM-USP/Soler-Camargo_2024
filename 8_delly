@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Ref genome
+REFERENCE="NC0009623.fasta"
+
+# Out dir
+OUTPUT_DIR="delly_output"
+mkdir -p "$OUTPUT_DIR"
+
+for BAM_FILE in *.bam; do
+    BASE_NAME=$(basename "$BAM_FILE" .bam)
+    delly call -g "$REFERENCE" "$BAM_FILE" > "$OUTPUT_DIR/${BASE_NAME}_delly.vcf"
+    
+    echo "Processado: $BAM_FILE -> $OUTPUT_DIR/${BASE_NAME}_delly.vcf"
+done
+
+echo "Chamadas de variantes concluídas para todos os arquivos BAM."
