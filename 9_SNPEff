@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Create directory for output if it does not exist
+mkdir -p snpeff_norm
+
+# Loop to process each VCF file
+for vcf_file in *_norm.g.vcf.gz; do
+    # Setting the output file name to .vcf.gz
+    output_file="snpeff_norm/$(basename "$vcf_file" .vcf.gz)_norm_annotated.vcf.gz"
+    
+    # Running SnpEff to annotate the VCF and compressing the output directly
+    /home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/snpEff/snpEff.jar eff -v -ud 100 NC_000962.3 "$vcf_file" | bgzip$
+
+    # Index compressed VCF file with tabix
+    tabix -p vcf "$output_file"
+    
+    echo "Arquivo anotado e compactado gerado: $output_file"
+done
+
+
+#SNPEff must annotate the variant calling of the three callers, GATK, LoFreq and Delly, separately
+#Do not annotate cohort
+
