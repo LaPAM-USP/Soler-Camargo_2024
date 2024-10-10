@@ -1,0 +1,60 @@
+#Create cohort
+
+/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar GenomicsDBImport --genomicsdb-workspace-path dbgatk --intervals /home/geninfo/ncamargo/MTB_IAL_2022/mapping/variant_intervals.bed $(for file in *.vcf.gz; do echo "-V $file"; done)
+
+/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar GenotypeGVCFs -R /home/geninfo/ncamargo/MTB_IAL_2022/mapping/NC0009623.fasta -V gendb://dbgatk -O output_cohort.vcf.gz
+
+
+#Separate snps and indels
+
+
+/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include SNP -O snps.vcf.gz
+
+/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include INDEL -O indels.vcf.gz
+
+
+#Hard Filtering for SNPs
+
+#!/bin/bash
+
+# GATK PATH
+gatk="/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar"
+
+# Input VCF file
+input_vcf="/home/geninfo/ncamargo/MTB_IAL_2022/patients_129_139/snps.vcf.gz"
+
+# Output VCF file
+output_vcf="snps_filtered.vcf.gz"
+
+# Filter
+$gatk VariantFiltration \
+    -V "$input_vcf" \
+    -filter "QD < 2.0" --filter-name "QD2" \
+    -filter "QUAL < 30.0" --filter-name "QUAL30" \
+    -filter "SOR > 3.0" --filter-name "SOR3" \
+    -filter "FS > 60.0" --filter-name "FS60" \
+    -filter "MQ < 40.0" --filter-name "MQ40" \
+    -filter "MQRankSum < -12.5" --filter-name "MQRankSum-12.5" \
+    -filter "ReadPosRankSum < -8.0" --filter-name "ReadPosRankSum-8" \
+    -O "$output_vcf"
+
+#Hard Filtering for SNPs
+
+#!/bin/bash
+
+# GATK PATH
+gatk="/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar"
+
+# Input VCF file
+input_vcf="/home/geninfo/ncamargo/MTB_IAL_2022/patients_129_139/indels.vcf.gz"
+
+# Output VCF file
+output_vcf="indels_filtered.vcf.gz"
+
+# Filter
+$gatk VariantFiltration \
+    -V "$input_vcf" \
+    -filter "QUAL < 30.0" --filter-name "QUAL30" \
+    -filter "FS > 200.0" --filter-name "FS200" \
+    -filter "ReadPosRankSum < -20.0" --filter-name "ReadPosRankSum-20" \
+    -O "$output_vcf"
