@@ -39,14 +39,14 @@ for r1_file in ${paired_dir}/*_R1_paired.fq.gz; do
         # Renaming with Picard
         library_name=$(basename "$(dirname "$paired_dir")")
         named_bam="${output_dir}/${sample_name}-sorted-named.bam"
-        /home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar picard.jar AddOrReplaceReadGroups -I "$sorted_bam" -O "$named_bam" -RGID 1 -RGLB "$library_name" -RGPL ILLUMINA -RGPU unit1 -RGSM "$sample_name"
+        java -jar picard.jar AddOrReplaceReadGroups -I "$sorted_bam" -O "$named_bam" -RGID 1 -RGLB "$library_name" -RGPL ILLUMINA -RGPU unit1 -RGSM "$sample_name"
 
         echo "Read groups nomeadas para $sample_name"
 
         # MarkDuplicates with Picard
         marked_dup_bam="${output_dir}/${sample_name}-sorted-named-dupl.bam"
         marked_dup_metrics="${output_dir}/${sample_name}-marked-dup-metrics.txt"
-        /home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar picard.jar MarkDuplicates -I "$named_bam" -O "$marked_dup_bam" -M "$marked_dup_metrics"
+        java -jar picard.jar MarkDuplicates -I "$named_bam" -O "$marked_dup_bam" -M "$marked_dup_metrics"
 
         echo "Duplicadas marcadas para $sample_name"
 
