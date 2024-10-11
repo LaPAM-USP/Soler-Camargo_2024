@@ -1,16 +1,16 @@
 #Create cohort
 
-/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar GenomicsDBImport --genomicsdb-workspace-path dbgatk --intervals /home/geninfo/ncamargo/MTB_IAL_2022/mapping/variant_intervals.bed $(for file in *.vcf.gz; do echo "-V $file"; done)
+java -jar gatk-package-4.4.0.0-local.jar GenomicsDBImport --genomicsdb-workspace-path dbgatk --intervals variant_intervals.bed $(for file in *.vcf.gz; do echo "-V $file"; done)
 
-/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar GenotypeGVCFs -R /home/geninfo/ncamargo/MTB_IAL_2022/mapping/NC0009623.fasta -V gendb://dbgatk -O output_cohort.vcf.gz
+java -jar gatk-package-4.4.0.0-local.jar GenotypeGVCFs -R NC0009623.fasta -V gendb://dbgatk -O output_cohort.vcf.gz
 
 
 #Separate snps and indels
 
 
-/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include SNP -O snps.vcf.gz
+java -jar gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include SNP -O snps.vcf.gz
 
-/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include INDEL -O indels.vcf.gz
+java -jar gatk-package-4.4.0.0-local.jar SelectVariants -V output_cohort_patients_129_139.vcf.gz --select-type-to-include INDEL -O indels.vcf.gz
 
 
 #Hard Filtering for SNPs
@@ -18,10 +18,10 @@
 #!/bin/bash
 
 # GATK PATH
-gatk="/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar"
+gatk="java -jar gatk-package-4.4.0.0-local.jar"
 
 # Input VCF file
-input_vcf="/home/geninfo/ncamargo/MTB_IAL_2022/patients_129_139/snps.vcf.gz"
+input_vcf="/vcf/snps.vcf.gz"
 
 # Output VCF file
 output_vcf="snps_filtered.vcf.gz"
@@ -43,10 +43,10 @@ $gatk VariantFiltration \
 #!/bin/bash
 
 # GATK PATH
-gatk="/home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar"
+gatk="java -jar gatk-package-4.4.0.0-local.jar"
 
 # Input VCF file
-input_vcf="/home/geninfo/ncamargo/MTB_IAL_2022/patients_129_139/indels.vcf.gz"
+input_vcf="/vcf/indels.vcf.gz"
 
 # Output VCF file
 output_vcf="indels_filtered.vcf.gz"
