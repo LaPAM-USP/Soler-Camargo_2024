@@ -32,7 +32,7 @@ else:
     print('Database already formated.')
 
 # Run - VCF files from gatk
-path_snpeff = '/home/nailasoler/Lapam/IAL/4_0_bcftools_norm/snpeff_norm205'
+path_snpeff = '/run/snpeff'
 
 #Pre-processing annotated VCFs
 path_filtered = os.path.join(path_snpeff, "filtered")
