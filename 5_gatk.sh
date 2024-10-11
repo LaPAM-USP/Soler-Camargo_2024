@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Diretório com os arquivos BAM
-bam_dir="/home/geninfo/ncamargo/MTB_IAL_2022/run_103il/map"
-gvcf_dir="/home/geninfo/ncamargo/MTB_IAL_2022/run_103il/map/gvcf_2024"
+bam_dir="run/map"
+gvcf_dir="/run/map/gvcf"
 
 # Cria o diretório gvcf se ele não existir
 mkdir -p "$gvcf_dir"
@@ -17,7 +17,7 @@ for bam_file in "${bam_dir}"/*-sorted-named-dupl.bam; do
     output_gvcf="${gvcf_dir}/${sample_name}.g.vcf.gz"
     
     # Comando para chamar as variantes com GATK HaplotypeCaller em modo GVCF, incluindo MNPs
-    /home/geninfo/ncamargo/jdk-20.0.1/bin/java -jar /home/geninfo/ncamargo/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar HaplotypeCaller \
+    /java -jar /gatk-package-4.4.0.0-local.jar HaplotypeCaller \
     -R NC0009623.fasta \
     -I "$bam_file" \
     -O "$output_gvcf" \
