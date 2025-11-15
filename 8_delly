@@ -1,17 +1,85 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ============================================================
+# Structural Variant Calling with DELLY
+# Usage: ./delly.sh <biosample>
+# Input:  bwa/<biosample>/<biosample>.bam
+# Output: delly/<biosample>/<biosample>_delly.vcf.gz
+# Reference: mtbRef/NC0009623.fasta
+# ============================================================
 
-# Ref genome
-REFERENCE="NC0009623.fasta"
+set -euo pipefail
 
-# Out dir
-OUTPUT_DIR="delly_output"
+BIOSAMPLE="${1:-}"
+BWA_DIR="bwa/${BIOSAMPLE}"
+REF_DIR="mtbRef"
+REF="${REF_DIR}/NC0009623.fasta"
+OUTPUT_DIR="delly/${BIOSAMPLE}"
+LOG_FILE="${OUTPUT_DIR}/${BIOSAMPLE}_delly.log"
+
+# -------------------- CHECK INPUT --------------------
+if [[ -z "$BIOSAMPLE" ]]; then
+    echo "Usage: ./delly.sh <biosample>"
+    exit 1
+fi
+
+if [[ ! -d "$BWA_DIR" ]]; then
+    echo "[ERROR] BAM directory not found: ${BWA_DIR}"
+    exit 1
+fi
+
+if [[ ! -f "$REF" ]]; then
+    echo "[ERROR] Reference genome not found: ${REF}"
+    exit 1
+fi
+
 mkdir -p "$OUTPUT_DIR"
 
-for BAM_FILE in *.bam; do
-    BASE_NAME=$(basename "$BAM_FILE" .bam)
-    delly call -g "$REFERENCE" "$BAM_FILE" > "$OUTPUT_DIR/${BASE_NAME}_delly.vcf"
-    
-    echo "Processado: $BAM_FILE -> $OUTPUT_DIR/${BASE_NAME}_delly.vcf"
+# -------------------- DEPENDENCY CHECKS --------------------
+for cmd in delly bcftools bgzip tabix; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "[ERROR] Required command not found: $cmd"
+        exit 1
+    fi
 done
 
-echo "Chamadas de variantes concluídas para todos os arquivos BAM."
+# -------------------- RUN DELLY --------------------
+echo "[RUN] Running DELLY for biosample: ${BIOSAMPLE}"
+echo "[IN]  BAM directory: ${BWA_DIR}"
+echo "[REF] Reference genome: ${REF}"
+echo "[OUT] Output directory: ${OUTPUT_DIR}"
+echo "---------------------------------------------"
+
+# USE biosample.bam (correct final BAM)
+BAM_FILE="${BWA_DIR}/${BIOSAMPLE}.bam"
+
+if [[ ! -f "$BAM_FILE" ]]; then
+    echo "[ERROR] BAM file not found: ${BAM_FILE}"
+    exit 1
+fi
+
+echo "[INFO] Using BAM file: ${BAM_FILE}"
+
+RAW_BCF="${OUTPUT_DIR}/${BIOSAMPLE}_delly.bcf"
+VCF_BASENAME="${OUTPUT_DIR}/${BIOSAMPLE}_delly"
+
+echo "[RUN] Calling structural variants with DELLY..."
+delly call -g "$REF" -o "$RAW_BCF" "$BAM_FILE" 2>&1 | tee "$LOG_FILE"
+
+if [[ ! -s "$RAW_BCF" ]]; then
+    echo "[ERROR] DELLY did not produce a valid BCF file."
+    exit 1
+fi
+
+# -------------------- CONVERT TO VCF + COMPRESS --------------------
+echo "[INFO] Converting BCF to bgzip-compressed VCF..."
+bcftools view "$RAW_BCF" -Ov | bgzip -c > "${VCF_BASENAME}.vcf.gz"
+tabix -f -p vcf "${VCF_BASENAME}.vcf.gz"
+
+# Remove intermediate BCF
+rm -f "$RAW_BCF"
+rm -f "${RAW_BCF}.csi" 2>/dev/null || true
+
+echo "[OK] Final VCF ready: ${VCF_BASENAME}.vcf.gz"
+echo "[LOG] Log file: ${LOG_FILE}"
+echo "---------------------------------------------"
+echo "[DONE] Structural variant calling completed for biosample: ${BIOSAMPLE}"
