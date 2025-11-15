@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # ============================================================
-# NTM contamination filter based on LoFreq VCF
+# NTM contamination filter (LoFreq + GATK GVCF interval support)
 # Usage: ./ntmFilter.sh <biosample>
-# Input:  lofreq/<biosample>/<biosample>_lofreq.vcf.gz
-# Output: ntm/<biosample>/<biosample>_ntm_summary.csv
 # ============================================================
 
 set -euo pipefail
 
-
 BIOSAMPLE="${1:-}"
 LOFREQ_DIR="lofreq/${BIOSAMPLE}"
+GATK_DIR="gatk/${BIOSAMPLE}"
 OUTPUT_DIR="ntmFilter/${BIOSAMPLE}"
 SUMMARY_CSV="${OUTPUT_DIR}/${BIOSAMPLE}_ntm_summary.csv"
 
 REF_CHR="NC_000962.3"
 NTM_POS=1472307
-CUTOFF=0.20  # 20% threshold
+CUTOFF=0.20   # Only used for LoFreq AF
+
+mkdir -p "$OUTPUT_DIR"
 
 # -------------------- CHECK INPUT --------------------
 if [[ -z "$BIOSAMPLE" ]]; then
@@ -24,49 +24,92 @@ if [[ -z "$BIOSAMPLE" ]]; then
     exit 1
 fi
 
-VCF_FILE="${LOFREQ_DIR}/${BIOSAMPLE}_lofreq.vcf.gz"
-if [[ ! -f "$VCF_FILE" ]]; then
-    echo "[ERROR] LoFreq VCF not found: ${VCF_FILE}"
+VCF_LOFREQ="${LOFREQ_DIR}/${BIOSAMPLE}_lofreq.vcf.gz"
+if [[ ! -f "$VCF_LOFREQ" ]]; then
+    echo "[ERROR] LoFreq VCF not found: $VCF_LOFREQ"
     exit 1
 fi
 
-if [[ ! -f "${VCF_FILE}.csi" && ! -f "${VCF_FILE}.tbi" ]]; then
-    echo "[ERROR] Index file (.csi or .tbi) not found for ${VCF_FILE}"
+GVCF="${GATK_DIR}/${BIOSAMPLE}.g.vcf.gz"
+if [[ ! -f "$GVCF" ]]; then
+    echo "[ERROR] GATK GVCF not found: $GVCF"
     exit 1
 fi
-
-mkdir -p "$OUTPUT_DIR"
 
 echo "[RUN] Checking NTM contamination for biosample: ${BIOSAMPLE}"
-echo "[IN]  Input VCF: ${VCF_FILE}"
-echo "[OUT] Output directory: ${OUTPUT_DIR}"
+echo "[IN]  LoFreq VCF: ${VCF_LOFREQ}"
+echo "[IN]  GATK GVCF:  ${GVCF}"
+echo "[OUT] Output:     ${OUTPUT_DIR}"
 echo "---------------------------------------------"
 
-# -------------------- FIND VARIANT --------------------
-AF=$(bcftools query -r "${REF_CHR}:${NTM_POS}-${NTM_POS}" -f '%INFO/AF\n' "$VCF_FILE" 2>/dev/null | head -n 1 || true)
-GT=$(bcftools query -r "${REF_CHR}:${NTM_POS}-${NTM_POS}" -f '[%GT]\n' "$VCF_FILE" 2>/dev/null | head -n 1 || true)
+# ============================================================
+# STEP 1 — CHECK LoFreq VARIANT
+# ============================================================
 
-if [[ -z "$AF" ]]; then
-    echo "[INFO] No variant found at ${REF_CHR}:${NTM_POS}. Assuming AF=0 (no NTM)."
-    AF="0"
-    GT="0/0"
+AF=$(bcftools query -r "${REF_CHR}:${NTM_POS}-${NTM_POS}" -f '%INFO/AF\n' "$VCF_LOFREQ" 2>/dev/null | head -n 1 || true)
+GT_LF=$(bcftools query -r "${REF_CHR}:${NTM_POS}-${NTM_POS}" -f '[%GT]\n' "$VCF_LOFREQ" 2>/dev/null | head -n 1 || true)
+
+if [[ -n "${AF}" ]]; then
+    # LoFreq detected a variant
+    AF_NUM=$(printf "%.4f" "$AF")
+
+    if (( $(echo "$AF_NUM >= $CUTOFF" | bc -l) )); then
+        STATUS="FAIL"
+    else
+        STATUS="PASS"
+    fi
+
+    DP_NUM="NA"
+    GT="$GT_LF"
+else
+    # ============================================================
+    # STEP 2 — NO VARIANT IN LOFREQ → CHECK GVCF BLOCK
+    # ============================================================
+
+    GVCF_LINE=$(bcftools view \
+        --include "POS <= ${NTM_POS} && INFO/END >= ${NTM_POS}" \
+        -H "$GVCF" 2>/dev/null | head -n 1 || true)
+
+    if [[ -z "$GVCF_LINE" ]]; then
+        STATUS="NOCOV"
+        AF_NUM="0.0000"
+        GT="./."
+        DP_NUM=0
+    else
+        # Extract FORMAT field
+        FORMAT_FIELD=$(echo "$GVCF_LINE" | awk '{print $10}')
+
+        # Extract GT and DP from the FORMAT
+        GT=$(echo "$FORMAT_FIELD" | cut -d: -f1)
+        DP_NUM=$(echo "$FORMAT_FIELD" | cut -d: -f2)
+        DP_NUM=$(echo "${DP_NUM:-0}" | grep -Eo '^[0-9]+' || echo 0)
+
+        # Interpret GT → AF → STATUS
+        case "$GT" in
+            "0/0") AF_NUM="0.0000"; STATUS="PASS" ;;
+            "0/1") AF_NUM="0.5000"; STATUS="FAIL" ;;
+            "1/1") AF_NUM="1.0000"; STATUS="FAIL" ;;
+            "./.") AF_NUM="0.0000"; STATUS="NOCOV"; DP_NUM=0 ;;
+            *)     AF_NUM="0.0000"; STATUS="NOCOV" ;;
+        esac
+
+        # Coverage rule
+        if [[ "$DP_NUM" -eq 0 ]]; then
+            STATUS="NOCOV"
+        fi
+    fi
 fi
 
-# Remove any trailing characters and ensure numeric
-AF_NUM=$(printf "%.4f" "$AF" 2>/dev/null || echo "0.0000")
+# ============================================================
+# SAVE RESULTS
+# ============================================================
 
-# Determine PASS/FAIL
-status="PASS"
-if (( $(echo "$AF_NUM >= $CUTOFF" | bc -l) )); then
-    status="FAIL"
-fi
-
-# -------------------- WRITE SUMMARY --------------------
-echo "biosample,filename,genotype,position,allele_frequency,status" > "$SUMMARY_CSV"
-echo "${BIOSAMPLE},$(basename "$VCF_FILE"),${GT},${NTM_POS},${AF_NUM},${status}" >> "$SUMMARY_CSV"
+echo "biosample,vcf,genotype,position,allele_frequency,depth,status" > "$SUMMARY_CSV"
+echo "${BIOSAMPLE},$(basename "$VCF_LOFREQ"),${GT},${NTM_POS},${AF_NUM},${DP_NUM},${STATUS}" >> "$SUMMARY_CSV"
 
 echo "[OK] Summary CSV generated: ${SUMMARY_CSV}"
-echo "---------------------------------------------"
 echo "[DONE] NTM filter completed for biosample: ${BIOSAMPLE}"
-echo "[OUT] Status: ${status} (AF=${AF_NUM})"
-echo "[OUT] Results saved in: ${OUTPUT_DIR}"
+echo "[OUT] Status: $STATUS"
+echo "[OUT] AF: $AF_NUM"
+echo "[OUT] DP: $DP_NUM"
+echo "[OUT] Saved in: ${OUTPUT_DIR}"
