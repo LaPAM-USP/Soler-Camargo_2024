@@ -1,2 +1,114 @@
-#Trimmomatic
-for f in *R1_001.fastq.gz; do trimmomatic PE "$f" "${f/R1_001.fastq.gz/R2_001.fastq.gz}" "${f/R1_001.fastq.gz/forward_paired.fq.gz}" "${f/R1_001.fastq.gz/forward_unpaired.fq.gz}" "${f/R1_001.fastq.gz/reverse_paired.fq.gz}" "${f/R1_001.fastq.gz/reverse_unpaired.fq.gz}" SLIDINGWINDOW:4:20 2>&1 | tee "log_$f.txt"; done
+#!/usr/bin/env bash
+# ============================================================
+# Run Trimmomatic for all paired reads of a given biosample
+# Usage: ./trimmomatic.sh <biosample ID>
+# Input files must use the Illumina read naming convention:
+# 1827-22_S1_L001_R1_001.fastq.gz
+# ││││││││││││││││││││││││││
+# └─── biosample ID (1827-22)
+#        └── biosample number (S1)
+#           └── lane (L002)
+#                └── read direction (R1/R2)
+#                   └── file index (_001)
+# ============================================================
+
+
+set -euo pipefail
+
+
+BIOSAMPLE="$1"
+INPUT_DIR="reads"
+INPUT_PATH="${INPUT_DIR}/${BIOSAMPLE}"
+OUTPUT_DIR="trimmomatic/${BIOSAMPLE}"
+SUMMARY_CSV="${OUTPUT_DIR}/trimmomatic_summary_${BIOSAMPLE}.csv"
+
+MIN_BOTH_SURVIVING=75.0
+
+mkdir -p "$OUTPUT_DIR"
+
+echo "[RUN] Running Trimmomatic for biosample: $BIOSAMPLE"
+echo "[DIR] Searching files in: ${INPUT_DIR}"
+echo "[OUT] Output directory: ${OUTPUT_DIR}"
+echo "---------------------------------------------"
+
+# ======== FIND READ PAIRS ========
+R1_FILES=($(find "${INPUT_DIR}" -type f -name "*${BIOSAMPLE}*_R1_001.fastq.gz" | sort))
+R2_FILES=($(find "${INPUT_DIR}" -type f -name "*${BIOSAMPLE}*_R2_001.fastq.gz" | sort))
+
+if [[ ${#R1_FILES[@]} -eq 0 || ${#R2_FILES[@]} -eq 0 ]]; then
+    echo "[ERROR] No read pairs found for biosample '${BIOSAMPLE}'."
+    exit 1
+fi
+
+if [[ ${#R1_FILES[@]} -ne ${#R2_FILES[@]} ]]; then
+    echo "[ERROR] Unequal number of R1 (${#R1_FILES[@]}) and R2 (${#R2_FILES[@]}) files."
+    echo "[HINT] Each lane must have one R1 and one R2 file."
+    exit 1
+fi
+
+echo "[INFO] Found ${#R1_FILES[@]} read pairs:"
+for i in "${!R1_FILES[@]}"; do
+    echo "   • $(basename "${R1_FILES[$i]}") ↔ $(basename "${R2_FILES[$i]}")"
+done
+echo "---------------------------------------------"
+
+# ======== RUN TRIMMOMATIC ========
+for i in "${!R1_FILES[@]}"; do
+    R1="${R1_FILES[$i]}"
+    R2="${R2_FILES[$i]}"
+    BASE=$(basename "${R1/_R1_001.fastq.gz/}")
+
+    OUT_R1_PAIRED="${OUTPUT_DIR}/$(basename "$R1")"
+    OUT_R2_PAIRED="${OUTPUT_DIR}/$(basename "$R2")"
+    OUT_R1_UNPAIRED="${OUTPUT_DIR}/${BASE}_R1_unpaired.fastq.gz"
+    OUT_R2_UNPAIRED="${OUTPUT_DIR}/${BASE}_R2_unpaired.fastq.gz"
+    LOG_FILE="${OUTPUT_DIR}/${BASE}_trimmomatic.log"
+
+    echo "[RUN] Trimming: $(basename "$R1") and $(basename "$R2")"
+    trimmomatic PE \
+        "$R1" "$R2" \
+        "$OUT_R1_PAIRED" "$OUT_R1_UNPAIRED" \
+        "$OUT_R2_PAIRED" "$OUT_R2_UNPAIRED" \
+        SLIDINGWINDOW:4:20 MINLEN:50 \
+        2>&1 | tee "$LOG_FILE"
+
+    rm -f "$OUT_R1_UNPAIRED" "$OUT_R2_UNPAIRED"
+done
+
+echo "---------------------------------------------"
+echo "[INFO] Parsing trimming statistics..."
+echo "biosample,filename,input_read_pairs,both_surviving,both_surviving_pct,forward_only,forward_only_pct,reverse_only,reverse_only_pct,dropped,dropped_pct,status" > "$SUMMARY_CSV"
+
+# ======== PARSE LOGS ========
+for LOG_FILE in "${OUTPUT_DIR}"/*_trimmomatic.log; do
+    FILE=$(basename "$LOG_FILE" | sed 's/_trimmomatic\.log//')
+
+    CLEAN_LINE=$(grep "Input Read Pairs:" "$LOG_FILE" | \
+        sed 's/,/./g; s/[()%]//g')
+
+    if [[ -n "$CLEAN_LINE" ]]; then
+        input=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Pairs:") print $(i+1)}')
+        both=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-1)=="Both") print $(i+1)}')
+        both_pct=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-1)=="Both") print $(i+2)}')
+        forward=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-2)=="Forward") print $(i+1)}')
+        forward_pct=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-2)=="Forward") print $(i+2)}')
+        reverse=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-2)=="Reverse") print $(i+1)}')
+        reverse_pct=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Surviving:" && $(i-2)=="Reverse") print $(i+2)}')
+        dropped=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Dropped:") print $(i+1)}')
+        dropped_pct=$(echo "$CLEAN_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="Dropped:") print $(i+2)}')
+
+        status="PASS"
+        if [[ -n "$both_pct" ]]; then
+            if (( $(echo "$both_pct < $MIN_BOTH_SURVIVING" | bc -l) )); then
+                status="FAIL"
+            fi
+        else
+            status="FAIL"
+        fi
+
+        echo "${BIOSAMPLE},${FILE},${input},${both},${both_pct},${forward},${forward_pct},${reverse},${reverse_pct},${dropped},${dropped_pct},${status}" >> "$SUMMARY_CSV"
+    fi
+done
+
+echo "[OK] Summary table generated: $SUMMARY_CSV"
+echo "[DONE] Trimmomatic completed successfully for biosample: $BIOSAMPLE"
