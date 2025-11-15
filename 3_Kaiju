@@ -1,2 +1,156 @@
-#Kaiju paired-end
-for i in *R1_001.fastq.gz; do kaiju -t nodes.dmp -f kaiju_db_refseq_nr.fmi -i "$i" -j "${i/R1_001.fastq.gz/R2_001.fastq.gz}" -o "${i/R1_001.fastq.gz/.out}"; done
+#!/usr/bin/env bash
+# ============================================================
+# Kaiju classification of paired-end reads
+# Author: Naila Soler
+# Usage: ./kaiju.sh <biosample>
+# Example: ./kaiju.sh 1827-22
+# ------------------------------------------------------------
+# Features:
+# - Auto-download Kaiju database from Zenodo if missing
+# ============================================================
+
+set -euo pipefail
+
+START_TIME=$SECONDS
+
+BIOSAMPLE="${1:-}"
+TRIM_DIR="trimmomatic/${BIOSAMPLE}"
+KAIJU_DIR="kaiju"
+
+DB_DIR="${KAIJU_DIR}/db"
+DB_TAR="${KAIJU_DIR}/kaiju_mycobacterium.tar.gz"
+
+ZENODO_URL="https://zenodo.org/records/17554952/files/kaiju_mycobacterium.tar.gz"
+OUTPUT_DIR="${KAIJU_DIR}/${BIOSAMPLE}"
+
+# -------------------- CHECK INPUT --------------------
+if [[ -z "$BIOSAMPLE" ]]; then
+    echo "Usage: ./3_Kaiju.sh <biosample>"
+    exit 1
+fi
+
+if [[ ! -d "$TRIM_DIR" ]]; then
+    echo "Error: directory ${TRIM_DIR} not found."
+    exit 1
+fi
+
+# Ensure directories exist
+mkdir -p "$KAIJU_DIR" "$DB_DIR" "$OUTPUT_DIR"
+
+# -------------------- DOWNLOAD DATABASE IF MISSING --------------------
+if [[ ! -f "$DB_TAR" ]]; then
+    echo "[DB] Database archive not found. Downloading from Zenodo..."
+    echo "[DB] URL: $ZENODO_URL"
+    if command -v wget >/dev/null 2>&1; then
+        wget -O "$DB_TAR" "$ZENODO_URL"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -L -o "$DB_TAR" "$ZENODO_URL"
+    else
+        echo "Error: Neither wget nor curl is installed. Please install one to enable automatic download."
+        exit 1
+    fi
+    echo "[DB] Download completed: $DB_TAR"
+else
+    echo "[DB] Database archive already present: $DB_TAR"
+fi
+
+# -------------------- VERIFY DATABASE --------------------
+verify_database() {
+    echo "[DB] Verifying Kaiju database integrity..."
+    local required_files=("nodes.dmp" "names.dmp")
+    local fmi_file
+    fmi_file=$(find "$DB_DIR" -maxdepth 1 -type f -name "*.fmi" | head -n 1 || true)
+    for f in "${required_files[@]}"; do
+        [[ ! -s "${DB_DIR}/${f}" ]] && { echo "[DB] Missing ${f}"; return 1; }
+    done
+    [[ -z "$fmi_file" || ! -s "$fmi_file" ]] && { echo "[DB] Missing FMI index."; return 1; }
+    head -c 8 "$fmi_file" >/dev/null 2>&1 || { echo "[DB] FMI appears corrupted."; return 1; }
+    echo "[DB] Database integrity check passed."
+    return 0
+}
+
+# -------------------- EXTRACT DATABASE --------------------
+extract_database() {
+    echo "[DB] Extracting Kaiju database into ${DB_DIR}..."
+    rm -rf "${DB_DIR:?}"/*
+    tar --strip-components=5 -xzf "$DB_TAR" -C "$DB_DIR" 2>/dev/null || \
+    tar --strip-components=4 -xzf "$DB_TAR" -C "$DB_DIR" 2>/dev/null || \
+    tar -xzf "$DB_TAR" -C "$DB_DIR"
+    echo "[DB] Database extracted successfully."
+}
+
+# -------------------- PREPARE DATABASE --------------------
+echo "[DB] Checking Kaiju database..."
+if ! verify_database; then
+    extract_database
+    verify_database || { echo "Error: database extraction failed."; exit 1; }
+else
+    echo "[DB] Kaiju database already extracted and valid."
+fi
+
+# -------------------- LOCATE READS --------------------
+R1=$(find "$TRIM_DIR" -type f -name "*R1_001.fastq.gz" | head -n 1)
+R2=$(find "$TRIM_DIR" -type f -name "*R2_001.fastq.gz" | head -n 1)
+[[ -z "$R1" || -z "$R2" ]] && { echo "Error: paired-end FASTQ files not found."; exit 1; }
+
+echo "[INFO] Running Kaiju for biosample: ${BIOSAMPLE}"
+echo "[INFO] R1: $R1"
+echo "[INFO] R2: $R2"
+
+# -------------------- DETECT DATABASE FILE --------------------
+DB_FMI=$(find "$DB_DIR" -maxdepth 1 -type f -name "*.fmi" | head -n 1)
+[[ -z "$DB_FMI" ]] && { echo "Error: Kaiju .fmi index not found."; exit 1; }
+echo "[DB] Using database index: ${DB_FMI}"
+
+# -------------------- RUN KAIJU --------------------
+OUTFILE="${OUTPUT_DIR}/${BIOSAMPLE}_kaiju.out"
+LOGFILE="${OUTPUT_DIR}/${BIOSAMPLE}_kaiju.log"
+
+set +e
+kaiju -t "${DB_DIR}/nodes.dmp" \
+      -f "$DB_FMI" \
+      -i "$R1" \
+      -j "$R2" \
+      -o "$OUTFILE" \
+      -z 8 -v | tee "$LOGFILE"
+KAIJU_STATUS=$?
+set -e
+
+if [[ $KAIJU_STATUS -ne 0 ]]; then
+    echo "[ERROR] Kaiju failed. Checking DB..."
+    if ! verify_database; then
+        extract_database
+        verify_database || { echo "Error: DB re-extraction failed."; exit 1; }
+        echo "[INFO] Retrying Kaiju..."
+        kaiju -t "${DB_DIR}/nodes.dmp" -f "$DB_FMI" -i "$R1" -j "$R2" -o "$OUTFILE" -z 8 -v | tee "$LOGFILE"
+    else
+        echo "[ERROR] Kaiju failed for another reason. See log."
+        exit 1
+    fi
+fi
+
+# -------------------- GENERATE SUMMARY TABLE (CSV only) --------------------
+SUMMARY_CSV="${OUTPUT_DIR}/${BIOSAMPLE}_kaiju_summary.csv"
+
+if command -v kaiju2table >/dev/null 2>&1; then
+    echo "[INFO] Generating summary table in CSV format..."
+    TMP_TSV=$(mktemp)
+    kaiju2table \
+        -t "${DB_DIR}/nodes.dmp" \
+        -n "${DB_DIR}/names.dmp" \
+        -r species \
+        -o "$TMP_TSV" \
+        "$OUTFILE"
+    awk 'BEGIN{FS="\t"; OFS=","} {print $0}' "$TMP_TSV" > "$SUMMARY_CSV"
+    rm -f "$TMP_TSV"
+    echo "[INFO] Summary CSV created: ${SUMMARY_CSV}"
+else
+    echo "[WARN] kaiju2table not found in PATH. Skipping summary."
+fi
+
+# -------------------- COMPLETION --------------------
+echo "[INFO] Kaiju classification completed."
+echo "[INFO] Output directory: ${OUTPUT_DIR}"
+
+ELAPSED=$(( SECONDS - START_TIME ))
+printf "[TIME] Total runtime: %02d min %02d sec\n" $((ELAPSED/60)) $((ELAPSED%60))
