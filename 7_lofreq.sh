@@ -3,7 +3,7 @@
 # Variant calling with LoFreq (overwrite enabled)
 # Usage: ./lofreq.sh <biosample>
 # Input:  bwa/<biosample>/<biosample>.bam
-# Output: lofreq/<biosample>/*.vcf.gz
+# Output: lofreq/<biosample>/*_lofreq.vcf.gz
 # Reference: mtbRef/NC0009623.fasta
 # ============================================================
 
